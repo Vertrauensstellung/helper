@@ -88,6 +88,41 @@ class WebTests(unittest.TestCase):
         status, page = self.call("/api/subdomains?per_page=1&page=2&sort=host&order=asc")
         self.assertEqual((page["total"], page["items"][0]["host"]), (3, "b.ex.com"))
 
+    def test_multi_value_filters(self):
+        self.assertEqual(self.hosts("?code=401&code=2xx"), ["a.ex.com", "b.ex.com", "login.ex.com"], "values of one key are OR-ed")
+        self.assertEqual(self.hosts("?status=active&status=offline&code=401"), ["login.ex.com"])
+        self.assertEqual(self.hosts("?root=ex.com&root=nope.org&status=offline"), ["b.ex.com"])
+        self.assertEqual(self.hosts("?q=domain:ex.com%20code:401"), ["login.ex.com"], "domain: is an alias of root:")
+
+    def test_facets_are_disjunctive(self):
+        status, f = self.call("/api/facets?status=offline")
+        self.assertEqual(status, 200)
+        self.assertEqual(f["total"], 1)
+        self.assertEqual(f["status"], {"active": 2, "offline": 1}, "a facet ignores its own filter")
+        self.assertEqual({c["code"]: c["count"] for c in f["codes"]}, {200: 1}, "other facets respect it")
+        self.assertEqual(f["root_counts"], [{"name": "ex.com", "count": 1}])
+        self.assertEqual(f["new"]["7"], 1)
+        _, f = self.call("/api/facets?tech=PHP&code=401")
+        self.assertEqual({t["name"]: t["count"] for t in f["tech"]}, {"Nginx": 1, "PHP": 1})
+
+    def test_insights(self):
+        status, data = self.call("/api/insights?days=7")
+        self.assertEqual(status, 200)
+        k = data["kpis"]
+        self.assertEqual((k["total"], k["active"], k["offline"], k["new_7d"], k["offline_7d"]), (3, 2, 1, 3, 1))
+        self.assertEqual(len(data["series"]), 7)
+        self.assertEqual((data["series"][-1]["total"], data["series"][-1]["active"]), (3, 2), "state rebuilt from the event log")
+        self.assertEqual(data["code_classes"], {"2xx": 1, "4xx": 1})
+        self.assertEqual(data["domains"][0]["domain"], "ex.com")
+        self.assertEqual(self.call("/api/insights?days=all")[0], 200)
+        self.assertEqual(self.call("/api/insights?root=nope.org")[1]["kpis"]["total"], 0)
+        self.assertEqual(self.call("/api/insights?days=abc")[0], 400)
+
+    def test_event_type_counts(self):
+        _, ev = self.call("/api/events?type=offline")
+        self.assertEqual(ev["total"], 1)
+        self.assertEqual(ev["type_counts"], {"new": 3, "changed": 1, "offline": 1})
+
     def test_detail_history_and_raw(self):
         _, data = self.call("/api/subdomains?q=host:a.ex.com")
         sub_id = data["items"][0]["id"]

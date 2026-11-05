@@ -26,7 +26,7 @@ SORTS = {
 TEXT_FIELDS = {
     "host": "s.host", "title": "s.title", "server": "s.webserver", "webserver": "s.webserver", "tech": "s.tech",
     "ip": "s.ips", "cname": "s.cname", "url": "s.urls", "notes": "s.notes", "source": "s.sources",
-    "cdn": "s.cdn_name", "location": "s.location", "root": "r.domain", "tls": "s.tls_subject_cn",
+    "cdn": "s.cdn_name", "location": "s.location", "root": "r.domain", "domain": "r.domain", "tls": "s.tls_subject_cn",
     "issuer": "s.tls_issuer", "favicon": "s.favicon", "hash": "s.body_hash", "type": "s.content_type",
 }
 FREE_TEXT = ("s.host", "s.title", "s.webserver", "s.tech", "s.ips", "s.urls", "s.cname", "s.notes", "s.cdn_name")
@@ -102,33 +102,60 @@ def _parse_query(q: str, where: list, params: list) -> None:
         where.append(f"NOT {clause}" if negate else clause)
 
 
-def _filters(args: dict) -> tuple[str, list]:
+# Filter keys that accept several values. The HTTP layer joins repeated query parameters
+# with "\n"; root/status/code/tag also accept commas (tech and server values may contain commas).
+MULTI_KEYS = {"root", "status", "code", "tech", "server", "tag", "no_tag", "type"}
+
+
+def multi(args: dict, key: str, commas: bool = True) -> list[str]:
+    raw = args.get(key) or ""
+    if isinstance(raw, (list, tuple)):
+        raw = "\n".join(str(v) for v in raw)
+    parts = str(raw).split("\n")
+    if commas:
+        parts = [p for chunk in parts for p in chunk.split(",")]
+    out = []
+    for part in (p.strip() for p in parts):
+        if part and part not in out:
+            out.append(part)
+    return out
+
+
+def _in(column: str, values: list, params: list) -> str:
+    params += values
+    return f"{column} IN ({','.join('?' * len(values))})"
+
+
+def _filters(args: dict, skip: str | None = None) -> tuple[str, list]:
+    """WHERE clause for the asset list. ``skip`` leaves one filter out (disjunctive facet counts)."""
     where, params = ["1"], []
-    get = lambda key: (args.get(key) or "").strip()  # noqa: E731
-    if get("root"):
-        where.append("r.domain = ?")
-        params.append(get("root").lower())
-    if get("status") in ("active", "offline"):
-        where.append("s.status = ?")
-        params.append(get("status"))
-    if get("code"):
-        where.append(_code_clause(get("code"), params))
-    if get("tech"):
-        where.append("s.tech LIKE ? ESCAPE '\\'")
-        params.append(_like(f'"{get("tech")}"'))
-    if get("server"):
-        where.append("s.webserver = ?")
-        params.append(get("server"))
-    for tag in filter(None, (t.strip() for t in get("tag").split(","))):
+    get = lambda key: str(args.get(key) or "").strip()  # noqa: E731
+    roots = [r.lower() for r in multi(args, "root")] if skip != "root" else []
+    if roots:
+        where.append(_in("r.domain", roots, params))
+    statuses = [v for v in multi(args, "status") if v in ("active", "offline")] if skip != "status" else []
+    if statuses:
+        where.append(_in("s.status", statuses, params))
+    codes = multi(args, "code") if skip != "code" else []
+    if codes:
+        where.append(_code_clause(",".join(codes), params))
+    techs = multi(args, "tech", commas=False) if skip != "tech" else []
+    if techs:
+        where.append("(" + " OR ".join("s.tech LIKE ? ESCAPE '\\'" for _ in techs) + ")")
+        params += [_like(f'"{t}"') for t in techs]
+    servers = multi(args, "server", commas=False) if skip != "server" else []
+    if servers:
+        where.append(_in("s.webserver", servers, params))
+    for tag in (multi(args, "tag") if skip != "tag" else []):
         where.append(_tag_exists("?"))
         params.append(tag)
-    for tag in filter(None, (t.strip() for t in get("no_tag").split(","))):
+    for tag in multi(args, "no_tag"):
         where.append("NOT " + _tag_exists("?"))
         params.append(tag)
     if get("untagged") in ("1", "true"):
         where.append("NOT EXISTS (SELECT 1 FROM subdomain_tags st WHERE st.subdomain_id = s.id)")
     try:
-        if get("new_days"):
+        if get("new_days") and skip != "new_days":
             where.append("s.first_seen >= ?")
             params.append(_days_ago(get("new_days")))
         if get("changed_days"):
@@ -338,7 +365,8 @@ def bulk_tags(conn, body: dict) -> dict:
         except (TypeError, ValueError):
             raise ApiError(400, "ids must be integers")
     elif isinstance(body.get("filter"), dict):
-        where, params = _filters({k: str(v) for k, v in body["filter"].items()})
+        flt = {k: "\n".join(map(str, v)) if isinstance(v, list) else str(v) for k, v in body["filter"].items()}
+        where, params = _filters(flt)
         ids = [r[0] for r in conn.execute(
             f"SELECT s.id FROM subdomains s JOIN roots r ON r.id = s.root_id WHERE {where}", params)]
     else:
@@ -396,11 +424,14 @@ def delete_tag(conn, tag_id: int) -> dict:
 
 
 def list_roots(conn) -> list[dict]:
+    week = _days_ago(7)
     return [dict(r) for r in conn.execute(
         "SELECT r.id, r.domain, r.created_at, r.last_scan_id, r.last_scan_at, r.wildcard, r.notes, "
         "  COUNT(s.id) AS total, COALESCE(SUM(s.status = 'active'), 0) AS active, "
-        "  COALESCE(SUM(s.status = 'offline'), 0) AS offline "
-        "FROM roots r LEFT JOIN subdomains s ON s.root_id = r.id GROUP BY r.id ORDER BY r.domain")]
+        "  COALESCE(SUM(s.status = 'offline'), 0) AS offline, "
+        "  COALESCE(SUM(s.first_seen >= ?), 0) AS new_7d, "
+        "  (SELECT sr.status FROM scan_roots sr WHERE sr.scan_id = r.last_scan_id AND sr.root_id = r.id) AS last_scan_status "
+        "FROM roots r LEFT JOIN subdomains s ON s.root_id = r.id GROUP BY r.id ORDER BY r.domain", (week,))]
 
 
 def update_root(conn, root_id: int, body: dict) -> dict:
@@ -438,29 +469,153 @@ def overview(conn) -> dict:
 
 
 def facets(conn, args: dict) -> dict:
-    root = (args.get("root") or "").strip().lower()
-    rw, rp = ("AND r.domain = ?", [root]) if root else ("", [])
-    base = f"FROM subdomains s JOIN roots r ON r.id = s.root_id WHERE 1 {rw}"
-    codes = [dict(code=r[0], count=r[1]) for r in conn.execute(
-        f"SELECT s.status_code, COUNT(*) {base} AND s.status_code IS NOT NULL GROUP BY s.status_code ORDER BY s.status_code", rp)]
-    servers = [dict(name=r[0], count=r[1]) for r in conn.execute(
-        f"SELECT s.webserver, COUNT(*) c {base} AND s.webserver IS NOT NULL GROUP BY s.webserver ORDER BY c DESC LIMIT 200", rp)]
-    tech = [dict(name=r[0], count=r[1]) for r in conn.execute(
-        f"SELECT j.value, COUNT(*) c {base.replace('WHERE', ', json_each(s.tech) j WHERE')} GROUP BY j.value "
-        f"ORDER BY c DESC LIMIT 300", rp)]
-    return {"codes": codes, "servers": servers, "tech": tech, "tags": list_tags(conn),
-            "roots": [r["domain"] for r in conn.execute("SELECT domain FROM roots ORDER BY domain")]}
+    """Counts for every filter facet, restricted to the current filters. Each facet is counted with its
+    own filter left out, so several values of one facet can be combined (OR) in the UI."""
+    joins = "FROM subdomains s JOIN roots r ON r.id = s.root_id"
+
+    def grouped(skip: str, select: str, group: str, extra: str = "", order: str = "c DESC", limit: int = 300):
+        where, params = _filters(args, skip=skip)
+        sql = (f"SELECT {select}, COUNT(*) AS c {joins}{extra} WHERE {where} GROUP BY {group} "
+               f"ORDER BY {order} LIMIT {int(limit)}")
+        return conn.execute(sql, params).fetchall()
+
+    where_all, params_all = _filters(args)
+    total = conn.execute(f"SELECT COUNT(*) {joins} WHERE {where_all}", params_all).fetchone()[0]
+    status = {r[0]: r[1] for r in grouped("status", "s.status", "s.status")}
+    root_counts = [dict(name=r[0], count=r[1]) for r in grouped("root", "r.domain", "r.domain", order="c DESC, r.domain")]
+    codes = [dict(code=r[0], count=r[1]) for r in grouped(
+        "code", "s.status_code", "s.status_code", order="s.status_code") if r[0] is not None]
+    servers = [dict(name=r[0], count=r[1]) for r in grouped(
+        "server", "s.webserver", "s.webserver", limit=200) if r[0]]
+    tech = [dict(name=r[0], count=r[1]) for r in grouped(
+        "tech", "j.value", "j.value", extra=", json_each(s.tech) j")]
+    where_t, params_t = _filters(args, skip="tag")
+    tag_rows = conn.execute(
+        f"SELECT t.id, t.name, t.color, t.created_at, COUNT(st.subdomain_id) AS count FROM tags t "
+        f"LEFT JOIN subdomain_tags st ON st.tag_id = t.id AND st.subdomain_id IN "
+        f"(SELECT s.id {joins} WHERE {where_t}) GROUP BY t.id ORDER BY count DESC, t.name COLLATE NOCASE",
+        params_t).fetchall()
+    where_n, params_n = _filters(args, skip="new_days")
+    new_counts = {}
+    for days in (1, 7, 30, 90):
+        new_counts[str(days)] = conn.execute(
+            f"SELECT COUNT(*) {joins} WHERE {where_n} AND s.first_seen >= ?", [*params_n, _days_ago(days)]).fetchone()[0]
+    return {
+        "total": total, "status": status, "root_counts": root_counts, "codes": codes, "servers": servers,
+        "tech": tech, "tags": [dict(r) for r in tag_rows], "new": new_counts,
+        "roots": [r["domain"] for r in conn.execute("SELECT domain FROM roots ORDER BY domain")],
+    }
+
+
+def insights(conn, args: dict) -> dict:
+    """Everything the overview page shows, scoped to an optional set of roots and a time range."""
+    roots = [r.lower() for r in multi(args, "root")]
+    sub_where, sub_params = "1", []
+    ev_where, ev_params = "1", []
+    if roots:
+        marks = ",".join("?" * len(roots))
+        sub_where = f"s.root_id IN (SELECT id FROM roots WHERE domain IN ({marks}))"
+        ev_where = f"e.root_id IN (SELECT id FROM roots WHERE domain IN ({marks}))"
+        sub_params, ev_params = list(roots), list(roots)
+    today = datetime.now(timezone.utc).date()
+    days_arg = str(args.get("days") or "30")
+    if days_arg == "all":
+        first = conn.execute(f"SELECT MIN(created_at) FROM events e WHERE {ev_where}", ev_params).fetchone()[0]
+        start = datetime.strptime(first[:10], "%Y-%m-%d").date() if first else today
+    else:
+        try:
+            start = today - timedelta(days=max(1, min(3650, int(days_arg))) - 1)
+        except ValueError:
+            raise ApiError(400, "days must be a number or 'all'")
+    start_ts = start.strftime("%Y-%m-%dT00:00:00Z")
+
+    # ---- daily series reconstructed from the event log ------------------------------------
+    base = {r[0]: r[1] for r in conn.execute(
+        f"SELECT type, COUNT(*) FROM events e WHERE {ev_where} AND created_at < ? GROUP BY type", [*ev_params, start_ts])}
+    per_day: dict[str, dict] = {}
+    for d, etype, n in conn.execute(
+            f"SELECT substr(created_at, 1, 10), type, COUNT(*) FROM events e WHERE {ev_where} AND created_at >= ? "
+            f"GROUP BY 1, 2", [*ev_params, start_ts]):
+        per_day.setdefault(d, {})[etype] = n
+    total = base.get("new", 0)
+    active = total - base.get("offline", 0) + base.get("back_online", 0)
+    series = []
+    day = start
+    while day <= today:
+        key = day.isoformat()
+        counts = per_day.get(key, {})
+        total += counts.get("new", 0)
+        active += counts.get("new", 0) - counts.get("offline", 0) + counts.get("back_online", 0)
+        series.append({"date": key, "new": counts.get("new", 0), "changed": counts.get("changed", 0),
+                       "offline": counts.get("offline", 0), "back_online": counts.get("back_online", 0),
+                       "total": total, "active": active})
+        day += timedelta(days=1)
+
+    # ---- headline numbers -------------------------------------------------------------------
+    one = lambda sql, *p: conn.execute(sql, p).fetchone()[0]  # noqa: E731
+
+    def events_between(etype, start_days, end_days=None):
+        if end_days is None:  # current period: open-ended, so events from this very second count too
+            return one(f"SELECT COUNT(*) FROM events e WHERE {ev_where} AND type = ? AND created_at >= ?",
+                       *ev_params, etype, _days_ago(start_days))
+        return one(f"SELECT COUNT(*) FROM events e WHERE {ev_where} AND type = ? AND created_at >= ? AND created_at < ?",
+                   *ev_params, etype, _days_ago(start_days), _days_ago(end_days))
+
+    kpis = {
+        "total": one(f"SELECT COUNT(*) FROM subdomains s WHERE {sub_where}", *sub_params),
+        "active": one(f"SELECT COUNT(*) FROM subdomains s WHERE {sub_where} AND status = 'active'", *sub_params),
+        "offline": one(f"SELECT COUNT(*) FROM subdomains s WHERE {sub_where} AND status = 'offline'", *sub_params),
+        "roots": len(roots) if roots else one("SELECT COUNT(*) FROM roots"),
+    }
+    for etype in ("new", "changed", "offline", "back_online"):
+        kpis[f"{etype}_7d"] = events_between(etype, 7)
+        kpis[f"{etype}_prev_7d"] = events_between(etype, 14, 7)
+
+    # ---- breakdowns of the current (active) surface -----------------------------------------
+    act = f"FROM subdomains s WHERE {sub_where} AND s.status = 'active'"
+
+    def top(select, extra="", where_extra="", limit=10):
+        return [dict(name=r[0], count=r[1]) for r in conn.execute(
+            f"SELECT {select}, COUNT(*) c FROM subdomains s{extra} WHERE {sub_where} AND s.status = 'active' "
+            f"{where_extra} GROUP BY 1 ORDER BY c DESC LIMIT {int(limit)}", sub_params)]
+
+    code_classes = {r[0]: r[1] for r in conn.execute(
+        f"SELECT CASE WHEN status_code BETWEEN 200 AND 299 THEN '2xx' WHEN status_code BETWEEN 300 AND 399 THEN '3xx' "
+        f"WHEN status_code BETWEEN 400 AND 499 THEN '4xx' WHEN status_code >= 500 THEN '5xx' ELSE 'other' END, COUNT(*) "
+        f"{act} GROUP BY 1", sub_params)}
+    soon = (datetime.now(timezone.utc) + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    expiring = [dict(r) for r in conn.execute(
+        f"SELECT s.id, s.host, s.tls_not_after, s.tls_issuer {act} AND s.tls_not_after IS NOT NULL "
+        f"AND s.tls_not_after <= ? ORDER BY s.tls_not_after LIMIT 10", [*sub_params, soon])]
+    takeovers = [dict(r) | {"cname": jload(r["cname"], [])} for r in conn.execute(
+        f"SELECT s.id, s.host, s.cname, s.status_changed_at FROM subdomains s WHERE {sub_where} AND s.status = 'offline' "
+        f"AND s.offline_reason = 'dns' AND s.cname != '[]' ORDER BY s.status_changed_at DESC LIMIT 10", sub_params)]
+    recent = list_events(conn, {"root": "\n".join(roots), "per_page": 8})["items"]
+    domains = [r for r in list_roots(conn) if not roots or r["domain"] in roots]
+    scans = list_scans(conn, {"per_page": 6})["items"]
+    return {
+        "range": {"start": start.isoformat(), "end": today.isoformat(), "days": days_arg},
+        "series": series,
+        "kpis": kpis,
+        "code_classes": code_classes,
+        "codes": top("s.status_code", where_extra="AND s.status_code IS NOT NULL", limit=8),
+        "tech": top("j.value", extra=", json_each(s.tech) j"),
+        "servers": top("s.webserver", where_extra="AND s.webserver IS NOT NULL", limit=8),
+        "cdn": top("s.cdn_name", where_extra="AND s.cdn_name IS NOT NULL", limit=6),
+        "sources": top("j.value", extra=", json_each(s.sources) j"),
+        "expiring_tls": expiring,
+        "takeover_candidates": takeovers,
+        "recent_events": recent,
+        "domains": domains,
+        "scans": scans,
+    }
 
 
 def list_events(conn, args: dict) -> dict:
     where, params = ["1"], []
-    if args.get("type"):
-        types = [t for t in args["type"].split(",") if t]
-        where.append(f"e.type IN ({','.join('?' * len(types))})")
-        params += types
-    if args.get("root"):
-        where.append("r.domain = ?")
-        params.append(args["root"].lower())
+    roots = [r.lower() for r in multi(args, "root")]
+    if roots:
+        where.append(_in("r.domain", roots, params))
     if args.get("scan"):
         where.append("e.scan_id = ?")
         params.append(int(args["scan"]))
@@ -473,16 +628,26 @@ def list_events(conn, args: dict) -> dict:
     if args.get("q"):
         where.append("s.host LIKE ? ESCAPE '\\'")
         params.append(_like(args["q"].strip()))
-    page = max(1, int(args.get("page") or 1))
-    per_page = min(500, max(1, int(args.get("per_page") or 100)))
-    base = (f"FROM events e JOIN subdomains s ON s.id = e.subdomain_id JOIN roots r ON r.id = e.root_id "
-            f"WHERE {' AND '.join(where)}")
+    joins = "FROM events e JOIN subdomains s ON s.id = e.subdomain_id JOIN roots r ON r.id = e.root_id"
+    # counts per type for the same filters (the type filter itself excluded)
+    type_counts = {r[0]: r[1] for r in conn.execute(
+        f"SELECT e.type, COUNT(*) {joins} WHERE {' AND '.join(where)} GROUP BY e.type", params)}
+    types = multi(args, "type")
+    if types:
+        where.append(_in("e.type", types, params))
+    try:
+        page = max(1, int(args.get("page") or 1))
+        per_page = min(500, max(1, int(args.get("per_page") or 100)))
+    except ValueError:
+        raise ApiError(400, "page/per_page must be integers")
+    base = f"{joins} WHERE {' AND '.join(where)}"
     total = conn.execute(f"SELECT COUNT(*) {base}", params).fetchone()[0]
     rows = conn.execute(
         f"SELECT e.id, e.scan_id, e.type, e.created_at, e.details, s.id AS subdomain_id, s.host, s.status, "
-        f"r.domain AS root {base} ORDER BY e.id DESC LIMIT ? OFFSET ?", [*params, per_page, (page - 1) * per_page])
+        f"s.title, s.status_code, r.domain AS root {base} ORDER BY e.id DESC LIMIT ? OFFSET ?",
+        [*params, per_page, (page - 1) * per_page])
     items = [dict(r) | {"details": jload(r["details"], {})} for r in rows]
-    return {"items": items, "total": total, "page": page, "per_page": per_page}
+    return {"items": items, "total": total, "page": page, "per_page": per_page, "type_counts": type_counts}
 
 
 def list_scans(conn, args: dict) -> dict:

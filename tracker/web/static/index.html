@@ -3,29 +3,45 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>subtrack</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/app.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <header class="topbar">
-    <a class="brand" href="#/assets"><span class="brand-mark" aria-hidden="true"></span>subtrack</a>
-    <nav class="nav" id="nav">
-      <a href="#/assets" data-view="assets">Assets</a>
-      <a href="#/changes" data-view="changes">Changes</a>
-      <a href="#/scans" data-view="scans">Scans</a>
-      <a href="#/domains" data-view="domains">Domains</a>
-      <a href="#/tags" data-view="tags">Tags</a>
-    </nav>
-    <div class="topbar-right">
-      <span id="worker-pill" class="pill muted" title="Scan worker status">worker: …</span>
-      <button id="theme-toggle" class="btn ghost icon" title="Toggle dark mode" aria-label="Toggle dark mode"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.75a6.25 6.25 0 0 1 0 12.5z" fill="currentColor"/></svg></button>
-      <button id="new-scan" class="btn primary">New scan</button>
+  <div class="app">
+    <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+      <a class="brand" href="#/overview">
+        <span class="brand-logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/><path d="M12 1.5v4M12 18.5v4M1.5 12h4M18.5 12h4"/></svg></span>
+        <span>subtrack<small>subdomain tracking</small></span>
+      </a>
+      <nav id="nav"></nav>
+      <div class="sidebar-foot">
+        <div id="worker" class="worker" title="Scan worker status"><span class="dot"></span><span class="txt">worker …</span></div>
+        <div class="foot-actions">
+          <button id="theme-toggle" class="btn ghost sm" title="Toggle light / dark"></button>
+          <button id="shortcuts-btn" class="btn ghost sm" title="Keyboard shortcuts (?)"></button>
+          <span class="grow"></span>
+          <span id="version" class="muted small"></span>
+        </div>
+      </div>
+    </aside>
+    <div class="main">
+      <header class="topbar" id="topbar">
+        <button class="btn ghost icon menu-btn" id="menu-btn" aria-label="Open menu"></button>
+        <div id="crumbs" class="crumbs"></div>
+        <button class="search-trigger" id="search-trigger" aria-label="Search everything"></button>
+        <button class="btn primary" id="new-scan"></button>
+      </header>
+      <main id="app" class="page" aria-live="polite"></main>
     </div>
-  </header>
-  <main id="app" class="container" aria-live="polite"></main>
-  <div id="toast" class="toast" role="status" hidden></div>
-  <dialog id="modal" class="modal"><div id="modal-body"></div></dialog>
+  </div>
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer" aria-label="Host details" aria-hidden="true"><div class="drawer-body" id="drawer-body"></div></aside>
+  <dialog id="palette" class="palette" aria-label="Command palette"></dialog>
+  <dialog id="modal" class="modal"></dialog>
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+  <div class="viz-tip" id="viz-tip" role="tooltip"></div>
 </body>
 </html>

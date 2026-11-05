@@ -125,7 +125,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._static(path)
         if self.command not in ("GET", "HEAD") and self.headers.get("X-Subtrack") != "1":
             return self.send_error_json(403, "missing X-Subtrack header")
-        args = {k: v[-1] for k, v in parse_qs(url.query, keep_blank_values=True).items()}
+        args = {k: ("\n".join(v) if k in api.MULTI_KEYS else v[-1])
+                for k, v in parse_qs(url.query, keep_blank_values=True).items()}
         for method, pattern, name in ROUTES:
             if method != ("GET" if self.command == "HEAD" else self.command):
                 continue
@@ -185,6 +186,10 @@ class Handler(BaseHTTPRequestHandler):
     @route("GET", r"/api/overview")
     def r_overview(self, conn, args, body):
         self.send_json(api.overview(conn) | {"db": db_path(), "version": __version__})
+
+    @route("GET", r"/api/insights")
+    def r_insights(self, conn, args, body):
+        self.send_json(api.insights(conn, args))
 
     @route("GET", r"/api/facets")
     def r_facets(self, conn, args, body):

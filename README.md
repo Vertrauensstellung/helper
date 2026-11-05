@@ -514,29 +514,77 @@ The goal: the history must stay trustworthy even when things go wrong.
 ## 11. The dashboard
 
 Start it with `make up` (or `docker compose up -d dashboard`) and open <http://127.0.0.1:8080>. It
-runs all the time and needs no restart when scans run.
+runs all the time and needs no restart when scans run. Times are shown in your browser's local time.
+Hover any time to see it in UTC.
 
-### Top bar
+### Navigation & shortcuts
 
-* **Worker pill:** `worker online`, `worker offline`, or `scanning…` (with the queue size).
-  The worker is only needed for scans started from the dashboard.
-* **Theme toggle:** light/dark (remembered per browser, follows the OS by default).
-* **New scan:** queue a scan (see [section 13](#13-worker-queue--scheduling)).
+* **Sidebar:** Overview, Assets, Changes, Scans, Domains, Tags (with counts), the worker status
+  (`Worker online` / `Worker offline` / `Scanning…`, plus the queue size), a light/dark toggle
+  (follows the OS by default, remembered per browser) and the shortcut list. On a phone the
+  sidebar slides in from the ☰ button.
+* **Command palette (`Ctrl K` / `⌘K`, or the search field in the top bar):** jump to any host
+  (searches as you type), page, domain or tag, or run an action (New scan, Re-scan all, dark mode).
+* **Keyboard:** `/` search assets · `j`/`k` next/previous row (or next/previous host while the detail
+  panel is open) · `↵` open · `x` select · `Esc` close · `g o`/`g a`/`g c`/`g s`/`g d`/`g t` go to a page ·
+  `?` all shortcuts.
+* **New scan** (top right): queue a scan for the worker (see [section 13](#13-worker-queue--scheduling)).
 
-### Assets (the main list)
+### Overview
 
-* **Stat tiles:** Total, Active, Offline, New · 7d, Changed · 7d, Went offline · 7d. Click one to
-  filter by it.
-* **Search box** with field syntax (table below). Filters update as you type.
-* **Filters:** domain, status, status code (incl. `2xx`…`5xx`), technology, web server, first-seen
-  window (24 h / 7 / 30 / 90 days), tags (several = all of them), untagged only.
-* **Sort** by clicking a column header (host, status, code, title, server, first seen, last seen).
-* **Table:** host (with ↗ link to open it), status (tooltip: since when and why), code, title,
-  tech, server, IP, first seen, last seen, tags. 25 to 1000 rows per page.
-* **Bulk tagging:** tick rows → type a tag → *Add tag* / *Remove tag*, or *Add to all N matches* to
-  apply it to every host matching the current filters (not just the visible page).
-* **Export** the current filter as CSV, JSON, a host list (`.txt`) or a URL list (`.txt`).
-* The current filter is in the URL, so you can bookmark searches or send the link to someone.
+One screen for the whole attack surface, scoped by a **domain** selector and a **time range**
+(30 days, 90 days, 1 year, all time). Everything is clickable and drills into the filtered asset list.
+
+* **KPI tiles:** tracked hosts, active (with availability %), offline (with how many came back
+  this week), and new / changed / went offline in the last 7 days, each with a 30-day sparkline
+  and the change against the previous 7 days.
+* **Attack surface:** active vs. all-time tracked hosts over time (rebuilt from the event log),
+  with a crosshair tooltip. Arrow keys work when the chart has focus.
+* **Response mix:** share of 2xx/3xx/4xx/5xx among active hosts, availability, share behind a
+  CDN/WAF, and the top status codes.
+* **Changes:** new / changed / went offline / back online per day (per week or month for longer
+  ranges) as stacked columns, with a hover tooltip and totals in the legend. Next to it, the latest changes.
+* **Technologies, web servers, discovered by:** ranked bars. Click one to see those hosts.
+* **Domains:** availability meter, new hosts this week and last scan per domain.
+* **Watchlist:** TLS certificates expiring within 30 days (or already expired), and **possible
+  takeovers**: offline hosts whose DNS vanished but that had a CNAME.
+* **Recent scans** with their results.
+
+Chart colours come from a palette validated for colour-vision deficiencies in light and dark mode.
+Status (active/offline) is never shown by colour alone: there is always a label next to it.
+
+### Assets – search & filters
+
+* **Big search box with suggestions.** As you type it offers:
+  * matching **filters**: `ngi` → *Tech: Nginx (17 hosts)*, *Server: nginx (25 hosts)*
+  * **fields**: `ti` → `title:`
+  * after `tech:`, `server:`, `tag:`, `domain:`, `status:` or `code:`, the **values** that exist in
+    your data, with counts
+  * **hosts** to jump straight to
+  * your **recent searches** when the box is empty
+
+  `↑↓` to move, `↵` to apply, `Tab` to complete, `Esc` to close. Picking a filter turns it into a
+  chip, and anything else stays free text with the field syntax below. Results update as you type.
+* **Quick views:** All assets, Active, New this week, Went offline · 7d, Changed · 7d, Server errors,
+  Auth walls 401/403, Untagged. Plus your own views: **Save view** stores the current filters (in
+  this browser) as an extra pill.
+* **Active filters** are shown as chips (remove one with ×, or *Clear all*).
+* **Facet sidebar** with live counts for status, domain, response (classes and exact codes),
+  technology, web server (both with a filter box), tags and first-seen window. Within a facet the
+  values are combined with OR (e.g. `nginx` *or* `Apache`). Across facets they're combined with AND.
+  Tags are the exception: several tags means the host must have all of them. Each facet's counts
+  ignore its own selection, so you always see what selecting another value would give. On a phone
+  the facets open from a *Filters* button.
+* **Results table:** host with title · server underneath (↗ opens the site), status, code,
+  technologies (click to filter), IP/CDN (on screens wider than 1600 px), seen (last seen, and
+  first seen underneath), tags. Sort by column header or the sort menu (newest, recently seen,
+  recent status change, A→Z, status code, most scans), and toggle compact rows. 25 to 1000 rows per page.
+* **Bulk tagging:** tick rows (or `x`), then use the toolbar at the bottom: *Add tag* / *Remove tag*,
+  or *Tag all N matches* for every host matching the current filters.
+* **Export** the current result as CSV, JSON, a host list or a URL list.
+* Clicking a row opens the **detail panel** on the right. The list stays where it is, and `j`/`k`
+  step through the results.
+* The whole filter state is in the URL, so you can bookmark it or send it to someone.
 
 ### Search syntax
 
@@ -560,51 +608,61 @@ runs all the time and needs no restart when scans run.
 | `tls:corp` · `issuer:"let's encrypt"` | TLS certificate subject CN / issuer |
 | `hash:<sha256>` · `favicon:<mmh3>` | body hash / favicon hash (find identical pages) |
 | `type:json` | content type |
-| `root:example.com` · `notes:todo` | root domain / your notes |
+| `domain:example.com` (or `root:`) · `notes:todo` | root domain / your notes |
 | `-tag:ignore` · `-code:404` | a leading `-` negates any term |
 
 Terms are combined with AND: `code:2xx tech:php -tag:reviewed`.
 
-### Host page
+### Host detail (panel or full page)
 
-* Header: host, status, code, root, **Copy host**, **Open ↗**. Offline hosts show since when and why.
-* **Overview:** all URLs, code, title, server, technologies, redirect, IPs, CNAME, CDN/WAF, content
-  type/length, TLS (CN, issuer, expiry), TLS SANs, favicon hash, body hash, last DNS answer, discovery
-  sources, first seen (with scan), last seen alive, last checked, number of scans seen in.
-* **Tags:** add (with autocomplete) / remove, quick buttons `interesting`, `in-scope`,
-  `out-of-scope`, `ignore`, `reported`.
-* **Notes:** free text, saved with *Save notes*.
-* **Timeline:** every event with diffs (`title: old → new`).
-* **Probe history:** one row per probe per scan (scan, time, phase, URL, code, title, server, bytes,
-  body hash) plus a "no response in this scan" row for every scan the host didn't answer, so you can
-  see its uptime pattern. **JSON** opens the full httpx JSON of that probe (with *Copy*).
-* **DNS history** and the **latest raw httpx JSON** (collapsible).
+Opens as a side panel from any list (⤢ opens it as its own page, `#/host/<id>`). Header: host,
+status, code, title, root, ‹ › for the previous/next result, copy, open in a new tab.
+
+* **Overview:**
+  * an offline callout (since when, and DNS vs. HTTP)
+  * an **availability strip** with one cell per scan of its domain (answered / no response)
+  * tags with autocomplete and quick tags (`interesting`, `in-scope`, `out-of-scope`, `ignore`,
+    `reported`), and notes
+  * fact cards for:
+    * **Response:** URLs, code, title, server, redirect, content, technologies
+    * **Network:** IPs, CNAME, CDN/WAF, last DNS answer
+    * **TLS:** subject, issuer, expiry with days left, SANs, version
+    * **Fingerprints & history:** favicon and body hash (click to find hosts serving the same
+      thing), discovery sources, first/last seen, last checked
+* **Timeline:** every event with old → new diffs.
+* **Probes:** one row per probe per scan plus "no response in this scan" rows. **JSON** opens the full
+  httpx JSON of that probe.
+* **DNS:** the DNS answer of every scan.
+* **Raw JSON:** the latest httpx output, with copy.
 
 ### Changes
 
-The feed of all events: **new**, **changed**, **offline**, **back online**, filterable by type,
-domain, period (24 h, 7 / 30 / 90 days, a year, all time) and host. Changed events show the diffs
-inline.
+Every event grouped by day (Today, Yesterday, …). Filter by type (with counts per type), domain,
+period (24 h, 7 / 30 / 90 days, a year, all time) and host. Changed events show their diffs inline.
+Click a row to open the host. *Load more* pages back in time.
 
 ### Scans
 
 * **Queue:** requests from the dashboard with status, options and the resulting scan. Queued
-  requests can be cancelled.
-* **History:** every scan with start time, duration, status, trigger, domains and totals (alive,
-  new, offline, back, changed).
-* **Scan detail:** per domain the funnel (subfinder / brute force / TLS SANs → candidates → resolve
-  → probed → alive), all changes, duration, wildcard flag and warnings, plus the parameters and tool
-  versions used.
+  requests can be cancelled. A banner tells you when requests are waiting but no worker runs.
+* **History:** status, scan number and trigger, start, duration, domains, results (alive, +new,
+  −offline, ↑back, ~changed) and a warning badge.
+* **Scan detail:** per domain:
+  * the **validation funnel** (candidates → resolve → probed → alive)
+  * discovery numbers (subfinder, brute force, TLS SANs, wildcard answers dropped)
+  * changes, duration and warnings
+  * links to that domain's assets and changes
+  * plus the parameters and tool versions used
 
 ### Domains & Tags
 
-* **Domains:** every root with asset, active and offline counts, last scan, *Re-scan* per domain,
-  *Re-scan all* and *Add domain*.
-* **Tags:** create (with colour), rename and recolour inline, delete (the assets stay, only the
-  tag goes). Click a count to see the tagged assets. Tag names are 1–64 characters, without commas,
-  and case-insensitive (`Prod` = `prod`).
+* **Domains:** a card per root domain with hosts, active, new this week, availability meter, last
+  scan, *Changes* and *Re-scan*. Plus *Re-scan all* and *Add domain*.
+* **Tags:** create (with colour), rename and recolour inline, delete (the assets stay, only the tag
+  goes). The count links to the tagged assets. Tag names are 1–64 characters, without commas, and
+  case-insensitive (`Prod` = `prod`).
 
-`active`/`offline` is not a tag: the status is tracked automatically and shown as a badge.
+`active`/`offline` is not a tag: the status is tracked automatically and shown as a labelled dot.
 
 ### Security model
 
@@ -727,7 +785,8 @@ configured.
 |---|---|---|
 | GET | `/healthz` | `{"ok": true}`. No auth (used by the Docker health check) |
 | GET | `/api/overview` | counts, events of the last 7 days, last scan, worker and queue state |
-| GET | `/api/facets?root=` | status codes, servers, technologies, tags and roots with counts (for filters) |
+| GET | `/api/insights?root=&days=30\|90\|365\|all` | everything on the Overview: daily series, KPIs with previous-period values, breakdowns, watchlists, domains, recent scans |
+| GET | `/api/facets` | facet counts for the current filters (takes the asset filter parameters; each facet ignores its own filter) |
 | GET | `/api/roots` | root domains with counts |
 | PATCH | `/api/roots/{id}` | `{"notes": "…"}` |
 | GET | `/api/subdomains` | asset list, filter parameters below |
@@ -740,7 +799,7 @@ configured.
 | GET | `/api/results/{id}` | the raw httpx JSON of one probe |
 | GET / POST | `/api/tags` | list (with counts) / create `{"name", "color"}` |
 | PATCH / DELETE | `/api/tags/{id}` | rename/recolour / delete |
-| GET | `/api/events` | `type` (comma list), `root`, `scan`, `days`, `q` (host contains), `page`, `per_page` (≤500) |
+| GET | `/api/events` | `type`, `root` (both repeatable), `scan`, `days`, `q` (host contains), `page`, `per_page` (≤500). Also returns `type_counts` |
 | GET | `/api/scans` · `/api/scans/{id}` | scan list (`page`, `per_page` ≤200) / details with per-domain stats and warnings |
 | GET / POST | `/api/scan-requests` | queue list / enqueue `{"domains": "a.com,b.com" or "all", "params": {…}}` (≤1000 domains) |
 | DELETE | `/api/scan-requests/{id}` | cancel a queued request |
@@ -751,10 +810,10 @@ configured.
 | parameter | meaning |
 |---|---|
 | `q` | search syntax (section 11) |
-| `root` | exact root domain |
-| `status` | `active` / `offline` |
-| `code` | `200`, `4xx`, `301,302` |
-| `tech` / `server` | exact technology / web server |
+| `root` | root domain. Repeat for several (`root=a.com&root=b.com`, OR) |
+| `status` | `active` / `offline` (repeatable) |
+| `code` | `200`, `4xx`, `301,302` (repeatable, OR) |
+| `tech` / `server` | exact technology / web server (repeatable, OR) |
 | `tag` / `no_tag` | comma list: must have all / none of these tags |
 | `untagged` | `1` = no tags at all |
 | `new_days` | first seen within N days |
@@ -969,7 +1028,7 @@ make up
 make test         # builds the `test` image and runs the suite inside it
 ```
 
-27 tests:
+31 tests:
 
 * **Unit (`tests/test_ingest.py`):** new/unchanged/changed detection, CDN IP rotation is ignored,
   offline with reason `dns`/`http`, still-offline, back-online, nothing deleted, a failed probe
