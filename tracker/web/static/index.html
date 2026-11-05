@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>subtrack</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/assets"><span class="brand-mark" aria-hidden="true"></span>subtrack</a>
+    <nav class="nav" id="nav">
+      <a href="#/assets" data-view="assets">Assets</a>
+      <a href="#/changes" data-view="changes">Changes</a>
+      <a href="#/scans" data-view="scans">Scans</a>
+      <a href="#/domains" data-view="domains">Domains</a>
+      <a href="#/tags" data-view="tags">Tags</a>
+    </nav>
+    <div class="topbar-right">
+      <span id="worker-pill" class="pill muted" title="Scan worker status">worker: …</span>
+      <button id="theme-toggle" class="btn ghost icon" title="Toggle dark mode" aria-label="Toggle dark mode"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.75a6.25 6.25 0 0 1 0 12.5z" fill="currentColor"/></svg></button>
+      <button id="new-scan" class="btn primary">New scan</button>
+    </div>
+  </header>
+  <main id="app" class="container" aria-live="polite"></main>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <dialog id="modal" class="modal"><div id="modal-body"></div></dialog>
+</body>
+</html>

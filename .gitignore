@@ -1,0 +1,6 @@
+/data/
+/.env
+__pycache__/
+*.pyc
+/config/subfinder/provider-config.yaml
+/scanner.env

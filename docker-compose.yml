@@ -1,0 +1,64 @@
+# subtrack – long-term subdomain tracking
+#
+#   docker compose up -d dashboard                        # web UI on http://127.0.0.1:8080
+#   docker compose run --rm scanner domain=example.com    # one scan (or: make scan domain=example.com)
+#   docker compose --profile worker up -d worker          # optional: runs scans queued in the dashboard
+#
+# All state lives in ${DATA_DIR:-./data}: tracker.db (SQLite) + raw tool output per scan.
+name: subtrack
+
+x-build: &build
+  context: .
+  args:
+    GO_IMAGE: ${GO_IMAGE:-golang:1.26}
+    PY_IMAGE: ${PY_IMAGE:-python:3.13-slim}
+
+x-scanner: &scanner
+  build:
+    <<: *build
+    target: scanner
+  image: subtrack-scanner:latest
+  init: true
+  volumes:
+    - ${DATA_DIR:-./data}:/data
+    - ./config:/config:ro
+  # Optional defaults for every scan, e.g. SCAN_PORTS=80,443,8080,8443 (see scanner.env.example)
+  env_file:
+    - path: ./scanner.env
+      required: false
+  environment:
+    TRACKER_DATA: /data
+
+services:
+  dashboard:
+    build:
+      <<: *build
+      target: dashboard
+    image: subtrack-dashboard:latest
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${DASHBOARD_BIND:-127.0.0.1}:${DASHBOARD_PORT:-8080}:8080"
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+    environment:
+      TRACKER_DATA: /data
+      DASHBOARD_USER: ${DASHBOARD_USER:-}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+      DASHBOARD_ALLOWED_HOSTS: ${DASHBOARD_ALLOWED_HOSTS:-}
+
+  # One-shot scan container. Not started by `up`; use `docker compose run --rm scanner ...`.
+  scanner:
+    <<: *scanner
+    profiles: ["scan"]
+
+  # Long-running worker that executes scans queued from the dashboard
+  # (and, with SCAN_SCHEDULE_HOURS > 0, re-scans every tracked domain on a schedule).
+  worker:
+    <<: *scanner
+    profiles: ["worker"]
+    command: ["mode=worker"]
+    restart: unless-stopped
+    environment:
+      TRACKER_DATA: /data
+      SCAN_SCHEDULE_HOURS: ${SCAN_SCHEDULE_HOURS:-0}

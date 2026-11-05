@@ -1,0 +1,10 @@
+.git
+data
+**/__pycache__
+**/*.pyc
+tests/lab/*.json
+tests/lab/*.crt
+tests/lab/*.key
+.env
+config/subfinder/provider-config.yaml
+scanner.env
