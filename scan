@@ -1,0 +1,9 @@
+#!/bin/sh
+# Run one scan in the scanner container. Every argument is passed through:
+#   ./scan domain=example.com
+#   ./scan domain=a.com,b.com brute=false ports=80,443,8080,8443
+#   ./scan domain=all
+#   ./scan help
+set -e
+cd "$(dirname "$0")"
+exec docker compose run --rm -T scanner "$@"

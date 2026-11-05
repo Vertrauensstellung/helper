@@ -1,0 +1,17 @@
+# subfinder API keys. Copy to provider-config.yaml (same folder) and fill in what you have;
+# the scanner picks it up automatically (mounted read-only at /config).
+# Free keys that add a lot of coverage: chaos, github, virustotal, securitytrails, shodan, censys, bevigil.
+# Full list of sources: docker compose run --rm --entrypoint subfinder scanner -ls
+#
+# chaos:
+#   - YOUR_CHAOS_KEY
+# github:
+#   - ghp_xxxxxxxxxxxxxxxxxxxx
+# virustotal:
+#   - YOUR_VT_KEY
+# securitytrails:
+#   - YOUR_ST_KEY
+# shodan:
+#   - YOUR_SHODAN_KEY
+# censys:
+#   - YOUR_CENSYS_ID:YOUR_CENSYS_SECRET
